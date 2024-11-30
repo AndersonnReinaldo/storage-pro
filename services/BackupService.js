@@ -1,0 +1,149 @@
+import { exec } from "child_process";
+import cron from "node-cron";
+import { FileService } from "./FileService.js";
+import { setCronJon } from "../core/Scheduler.js";
+import { CacheService } from "./CacheService.js";
+import { VALIDATOR, parsePlatformPath, wwwroot } from "../utils.js";
+export class BackupService {
+    constructor() {
+        this.fService = new FileService();
+    }
+    scheduleBackup(payload) {
+        return setCronJon(() => {
+            const tempath = `${wwwroot}/backup/${payload.folder}/temp_${Date.now()}`;
+            payload.command = this.replaceCommandPath(payload.command, tempath);
+            exec(payload.command, (error, stdout, stderr) => {
+                this.saveLog("dump " + (error ? "❌" : "✔"), stdout, stderr, payload.command);
+                if (error) {
+                    console.log(`error: ${error.message}`);
+                    return;
+                }
+                else {
+                    if (payload.path && this.fService.fileExists(payload.path)) {
+                        this.fService.deleteFile(payload.path);
+                        this.fService.rename(tempath, payload.path);
+                    }
+                }
+            });
+        }, payload.name.includes("backup:") ? payload.name : `backup:${payload.name}`, payload);
+    }
+    parseTaskName(name) {
+        return name.includes("backup:") ? name : `backup:${name}`;
+    }
+    parseJobName(name) {
+        return name.includes("backup:") ? name.split(":")[1] : name;
+    }
+    async backup(payload, update = false) {
+        return new Promise(async (resolve, reject) => {
+            if (payload.name == null || payload.folder == null || payload.connectionString == null) {
+                return reject({
+                    message: "name, folder and connectionString are required",
+                    status: "failed",
+                });
+            }
+            // must not contain file extension
+            payload.name = payload.name.substring(payload.name.lastIndexOf("."));
+            const path = `${wwwroot}/backup/${payload.folder}/${payload.name}`;
+            if (cron.getTasks().has(payload.name)) {
+                console.log(payload.name + " already exists ", Array.from(cron.getTasks().keys()));
+                cron.getTasks().get(payload.name).now();
+                return resolve({
+                    message: "backup already scheduled, executed right now and on schedule time too.",
+                    status: "success",
+                    error: false
+                });
+            }
+            await this.fService.createDirectory(`${wwwroot}/backup`);
+            await this.fService.createDirectory(`${wwwroot}/backup/${payload.folder}`);
+            let command = `pg_dump ${payload.zip ? "-F t" : ""} --dbname=${payload.connectionString} >> ${path} `;
+            if (payload.continuos) {
+                payload.path = path;
+                payload.command = command;
+                payload.key = `backup:${payload.name}`;
+                let scheduler = await this.scheduleBackup(payload);
+                if (scheduler.hasError) {
+                    return reject({
+                        message: "failed to schedule backup",
+                        status: "failed",
+                        error: scheduler.error.message
+                    });
+                }
+                CacheService.set(payload.key, JSON.stringify(payload));
+            }
+            if (update) {
+                return resolve({
+                    message: "backup updated",
+                    status: "success",
+                    error: false
+                });
+            }
+            else {
+                try {
+                    const tempath = `${wwwroot}/backup/${payload.folder}/temp_${Date.now()}`;
+                    command = this.replaceCommandPath(command, tempath);
+                    exec(command, (error, stdout, stderr) => {
+                        this.saveLog("dump " + (error ? "❌" : "✔"), stdout, stderr, command);
+                        if (error) {
+                            this.fService.deleteFile(path);
+                            console.log(`error exec: ${error.message}`);
+                            return reject(error);
+                        }
+                        if (payload.path && this.fService.fileExists(payload.path)) {
+                            this.fService.deleteFile(payload.path);
+                            this.fService.rename(tempath, payload.path);
+                        }
+                        return resolve({
+                            message: "backup done",
+                            status: "success",
+                            error: false
+                        });
+                    });
+                }
+                catch (error) {
+                    return reject(error);
+                }
+            }
+        });
+    }
+    async restore(payload) {
+        return new Promise(async (resolve, reject) => {
+            const path = `${wwwroot}/backup/${payload.folder}/${payload.name}`;
+            if (!this.fService.fileExists(path)) {
+                Promise.resolve({
+                    message: "file not found",
+                    status: "failed"
+                });
+            }
+            const command = `pg_restore -F t --no-privileges --no-owner --dbname=${payload.connectionString} ${path}`;
+            exec(command, (error, stdout, stderr) => {
+                this.saveLog("restore " + (error ? "❌" : "✔"), stdout, stderr, command);
+                if (error) {
+                    console.log(`error: ${error.message}`);
+                    return reject(error);
+                }
+                return resolve({
+                    message: "restore done",
+                    status: "success",
+                });
+            });
+        });
+    }
+    async saveLog(message, stdout, stderr, command) {
+        const date = new Date().toISOString();
+        await this.fService.createDirectory(`${wwwroot}/backup/logs`);
+        await this.fService.log(VALIDATOR.critical(parsePlatformPath(`/backup/logs/${date.split('T')[0]}_log`)), `
+         \n[${date}] ${message}
+         \n[${date}] command: ${command}
+         \n===============OUTPUT START================
+         \n[${date}] stdout: ${stdout}
+         \n[${date}] stderr: ${stderr}
+         \n===============OUTPUT END =================
+        `);
+    }
+    retrievePathFromCommand(command) {
+        return command.split(">>")[1].trim();
+    }
+    replaceCommandPath(command, replace) {
+        return command.split(">>")[0].trim() + ` >> ${replace}`;
+    }
+}
