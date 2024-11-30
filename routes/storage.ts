@@ -11,6 +11,7 @@ import { DirectoryView } from "../core/DirectoryView.js";
 import { FileService } from "../services/FileService.js";
 import { Request, Response } from "express";
 import path from "path";
+import { fileTypeFromBuffer } from "file-type";
 
 const fservice = new FileService();
 
@@ -71,7 +72,9 @@ export const get = async (req: Request, res: Response) => {
       request.projectScope
     );
 
-    const result = await fileRequest.readFile();
+    const result:any = await fileRequest.readFile();
+    const buffer = Buffer.from(result.data, "base64");
+    const fileType = await fileTypeFromBuffer(buffer);
 
     if (result.status != FileStatus.SUCCESS) {
       if (result.status === FileStatus.NOT_FOUND) {
@@ -89,6 +92,7 @@ export const get = async (req: Request, res: Response) => {
       projectScope: fileRequest.projectScope,
       filePath: fileRequest.filePath,
       data: result.data,
+      mimeType: fileType
     });
   } catch (error) {
     console.log(error);

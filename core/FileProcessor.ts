@@ -97,25 +97,31 @@ export const resizeImage = async (req: any, res: any, next: any) => {
   }
 
   try {
-    await Promise.all(req.files.map(async (file: any) => {
-      const filePath = path.join(file.destination, file.filename);
-      const outputFilePath = path.join(file.destination, `resized-${file.filename}`);
-      await sharp(filePath)
-        .resize(800, 800, {
-          fit: sharp.fit.inside,
-          withoutEnlargement: true,
-        })
-        .toFormat('webp') // Forçamos a conversão esse arquivo para webp
-  
-        .webp({ // Comprimimos, setando uma qualidade
-            quality: 80
-        })
-        .toFile(outputFilePath)
+    await Promise.all(
+      req.files.map(async (file: any) => {
+        const isImage = ["image/jpg", "image/jpeg", "image/png"].includes(file.mimetype);
+        
+        if (isImage) {
+          const filePath = path.join(file.destination, file.filename);
+          const outputFilePath = path.join(file.destination, `resized-${file.filename}`);
+          await sharp(filePath)
+            .resize(800, 800, {
+              fit: sharp.fit.inside,
+              withoutEnlargement: true,
+            })
+            .toFormat("webp")
+            .webp({
+              quality: 80,
+            })
+            .toFile(outputFilePath);
 
-
-      fs.unlinkSync(filePath);
-      fs.renameSync(outputFilePath, filePath);
-    }));
+          fs.unlinkSync(filePath);
+          fs.renameSync(outputFilePath, filePath);
+        } else {
+          console.log(`Arquivo ignorado no redimensionamento: ${file.filename}`);
+        }
+      })
+    );
 
     next();
   } catch (error) {
