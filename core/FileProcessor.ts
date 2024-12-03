@@ -77,16 +77,6 @@ const storage = multer.diskStorage({
 });
 
 export const FileProcessor = multer({ storage: storage, fileFilter: (req, file, cb) => {
-  // if (!req.query.projectName) {
-  //   return cb(new Error("Invalid projectName"));
-  // }
-
-  // temporary disable filters
-
-  // if (!RequestFile.validJoin(req.query.projectName, req.query.projectScope)) {
-  //   return cb(new Error("Invalid path! wwwroot is a reserved path"));
-  // }
-
   cb(null, true);
 } }).array("file", 5);
 
@@ -100,23 +90,22 @@ export const resizeImage = async (req: any, res: any, next: any) => {
     await Promise.all(
       req.files.map(async (file: any) => {
         const isImage = ["image/jpg", "image/jpeg", "image/png"].includes(file.mimetype);
-        
+
         if (isImage) {
           const filePath = path.join(file.destination, file.filename);
-          const outputFilePath = path.join(file.destination, `resized-${file.filename}`);
+          const tempOutputPath = path.join(file.destination, `temp-${file.filename}`);
+
+          // Mantém o formato original ao redimensionar
           await sharp(filePath)
             .resize(800, 800, {
               fit: sharp.fit.inside,
               withoutEnlargement: true,
             })
-            .toFormat("webp")
-            .webp({
-              quality: 80,
-            })
-            .toFile(outputFilePath);
+            .toFile(tempOutputPath);
 
+          // Substitui o arquivo original pelo redimensionado
           fs.unlinkSync(filePath);
-          fs.renameSync(outputFilePath, filePath);
+          fs.renameSync(tempOutputPath, filePath);
         } else {
           console.log(`Arquivo ignorado no redimensionamento: ${file.filename}`);
         }
@@ -128,3 +117,4 @@ export const resizeImage = async (req: any, res: any, next: any) => {
     next(error);
   }
 };
+
